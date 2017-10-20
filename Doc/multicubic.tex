@@ -1,1 +1,996 @@
+\input eplain
+\beginpackages
+\usepackage{graphicx}
+\usepackage{bmpsize}
+\endpackages
+%---------------------------- Verbatim -------------------------------
+% As in the TeXbook, page 421 (manmac)
+\newskip\ttglue
+\tt \ttglue=.5em plus.25em minus.15em \rm
+\chardef\other=12
+\def\ttverbatim{\begingroup \catcode`\\=\other \catcode`\{=\other
+  \catcode`\}=\other \catcode`\$=\other \catcode`\&=\other
+  \catcode`\#=\other \catcode`\%=\other \catcode`\~=\other
+  \catcode`\_=\other \catcode`\^=\other
+  \obeyspaces \obeylines \tt}
+{\obeyspaces\gdef {\ }} % \obeyspaces now gives \ , not \space
+\outer\def\begintt{$$\let\par=\endgraf \ttverbatim \parskip=0pt
+  \catcode`\|=0 \rightskip=-5pc \ttfinish}
+{\catcode`\|=0 |catcode`|\=\other % | is temporary escape character
+  |obeylines % end of line is active
+  |gdef|ttfinish#1^^M#2\endtt{#1|vbox{#2}|endgroup$$}}
+\catcode`\|=\active
+{\obeylines\gdef|{\ttverbatim\spaceskip=\ttglue\let^^M=\ \let|=\endgroup}}
 
+
+\def\done{{\hbox{{\fiverm 1D}}}}
+\def\dtwo{{\hbox{{\fiverm 2D}}}}
+\def\dthree{{\hbox{{\fiverm 3D}}}}
+\def\dfour{{\hbox{{\fiverm 4D}}}}
+\def\dfive{{\hbox{{\fiverm 5D}}}}
+\def\dsix{{\hbox{{\fiverm 6D}}}}
+\centerline{\bf Multicubic Interpolation of Gridded Data}
+
+\centerline{\bf Using Cascades of 1-D Cubic Splines}
+
+\centerline{by Robert W. Strickland}
+\centerline{October 2, 2015}
+\centerline{Rev.\ July 7, 2017}
+\medskip\goodbreak \noindent {\bf Abstract}
+
+An algorithm for cubic spline interpolation of a smooth function of more
+than one variable is presented. The method interpolates a smooth function that
+is tabulated on a rectilinear grid of the independent variables.
+The gridded sample points need not be equally-spaced.
+The method relies on fitting one-dimensional cubic splines to each
+independent variable in turn.
+The concept of a cascaded spline (a spline of spline coefficients) is
+introduced. These coefficients are calcuated and tabulated ahead of time.
+To evaluate the multicubic spline, the algorithm begins by searching the
+grid for
+the hyper-rectangle bounding the point of interest. It then
+slices the hyper-rectangle, interpolating the cascade of splines along
+one axis to eliminate one dependent variable. This reduces the
+dimensionality of the hyper-rectangle by one.
+The slicing process continues until a line
+segment remains. One final 1-D interpolation yields the value at the point of
+interest.
+All 1-D spline coefficients (and cascades thereof) are calculated ahead of
+time. The resulting multicubic spline surface has continuous
+first and second derivatives without requiring any explicit calculation or
+matching of derivatives. Formulations for cubic splines for functions of two,
+three, four and five independent variables are presented.
+These splines require only 3, 7, 15 and 29 coefficients,
+respectively, per point of the rectilinear grid. Once the hyper-rectangle
+containing the point of interest is located, the algorithm is
+deterministic and takes the same amount of calculation per interpolated point.
+The author has made available a prototype implementation in ANSI C for
+splines of two to five independent variables.
+\medskip\goodbreak \noindent {\bf Introduction}
+
+There are many applications where it is desirable to interpolate a
+tabulated function of more than one variable.
+Often, a physical process or device is modeled with numerical software that
+is computational expensive or time-consuming. In post-processing or plotting,
+one might need
+results at finer increments of the independent variables.
+If the underlying function is smooth, one can interpolate
+these from a table of stored values.
+
+The method is applicable to regridding data across different coordiante systems.
+The method can easily regrid into cartesian coordinates data acquired in
+cylindrical or spherical coordinates for grapical display. Applications include
+radar and sonar imaging.
+
+In the field of inverse modeling, the underlying
+variables are adjusted until the model matches a physical measurement. It is
+desirable to have an approximation to the model that is quicker to
+calculate than
+the numerical model. To approximate the function, a look-up table can be constructed by
+incrementing each independent variable to produce a function on a rectilinear
+grid of the dependent variables. The inverse model can then quickly approximate the function with the interpolant.
+
+Atmospheric or oceanic data are sampled
+in two or three dimensions. If the data are
+time-varying, a function of space and time can be fitted with a quadcubic
+spline of four variables.
+
+The new method is applicable to smooth
+functions, so it is not well-suited to resampling photographic images with sharp
+features or topographic maps of landforms with bluffs or sharp ridges.
+
+The cubic spline is often the method of choice to interpolate a smooth
+function of a single variable that is irregularly sampled.
+The spline function passes through all sample points, is smooth, has continuous
+first and second derivatives.
+Bicubic and tricubic splines are sometimes used to interpolate
+functions of two or three variables.
+The current work was developed to interpolate a function of four variables
+that is expensive to calculate but values are needed for arbitrary values of
+its independent variables.
+
+Another method for multi-dimensional interpolation is radial basis function
+(RBF) interpolation [B\&L]. RBF interpolation is often the method of choice
+for choice for random, non-gridded data. It can handle any number of
+independent variables. However, it requires careful choice of the
+functional form of the of basis function, coordinate axis scaling and
+radial scale parameter.
+With multi-dimensional RBF interpolation, very large system of equations 
+must be solved, and the resulting coefficients are often large in magnitude and
+alternating in sign, producing delicate cancellation of large terms.
+It has been the the author's experience that the size of the look-up table
+needed for accurate results with RBF interpolation is much greater than what
+is required for the new method.
+
+For the bicubic spline,
+there are two major approaches in the literature.
+One approach [NRC] is to calculate one-dimensional splines parallel to one
+coordinate axis ahead of time. Then to find the value at an arbitrary point,
+one evaluates all of
+these splines at the value of one of the variables to produce a vector of
+points along a slice through the point of interest.
+Then another cubic spline is calculated through this set of points along
+the direction perpendicular to the first.
+Finally, this cubic spline is evaluated at the value of the other independent
+variable. (It has been shown that it matters not which axis is chosen for the
+first set of splines.)
+This method produces smooth results, maintaining the second derivative
+continuity of the underlying one-dimensional cubic splines.
+However, it has two chief disadvantages.  Firstly, {\it all} of the first set
+of splines must be evaluated, even those far from the point of interest.
+Secondly, the second cubic spline is typically calculated at runtime.
+These difficulties are minimal for the 2-D case, but they
+compound when one tries to extend this method to higher dimensions. 
+The current method is mathematically equivalent to the {\it Numerical Recipes}
+method but allows all
+of the 1-D cubic splines to be calculated ahead of time from relatively small
+tables of coefficients.
+
+The second general approach by Keys [KEYS] uses the general bicubic polynomial,
+$$\sum_{i=0}^3 \sum_{j=0}^3 A_{ij}x^i y^j$$
+\noindent
+for the rectangular box bounding the point of interest.
+Thus summation has 16 unknown coefficients $A_{ij}$. At each new bounding
+box, the method solves a set of equations for these coefficients, matching the
+function and certain derivatives and partial derivatives at the vertices of
+(or along the edges of) the bounding box.
+In some implementations of this
+approach, one must use divided differences to approximate the
+derivatives. This process does not produce a continuous second
+derivative.
+
+Lekien and Marsden [L\&M] extend this method to three dimensions.
+They derive a tricubic spline of a function of three variables
+using the general form of the tricubic polynomial
+$$\sum_{i=0}^3 \sum_{j=0}^3 \sum_{k=0}^3 A_{ijk}x^i y^j z^k$$
+\noindent This method solves for the 64 $A_{ijk}$ coefficients by setting
+up a system of equations that explicitly match values of functions and
+higher order derivatives.
+Of these 64 coefficients, many are not linearly independent, so the system
+is sparse.
+Their interpolant has continuous first derivatives.
+Instead of trying to explicitly solve for the 3-D functional form of the
+interpolant, the proposed method relies on the underlying 1-D cubic spline
+to do the ``heavy
+lifting.''  Much of the complexity of derivation of Lekien and Marsden is in
+determining which
+of the 64 coefficients are nonzero and which derivatives are needed.
+In contrast, the the method presented here avoids the tedious matching of
+derivatives by
+using 1-D cubic splines coefficients directly. This simplification allows
+the method to be extended to higher dimensions in a straightforward
+manner.
+\medskip\goodbreak \noindent {\bf One-Dimensional Cubic Spline Interpolation}
+
+Let us begin with the one-dimensional cubic spline. A cubic spline has
+continuous first and second derivatives. We begin with a set of
+points $y_i = f(x_i)$ with $x_i$ in strictly increasing order.
+Following the development in {\it Numerical Recipes} [NRC],
+$i$-th segment of the spline
+between adjacent nodes
+$x_i$ and $x_{i+1}$ can be expressed in terms of the value of the function
+and its second derivative at the two nodes. If we consider a point $x_P$ such
+that $x_i < x_P < x_{i+1}$, let
+
+$$
+\eqalign{
+h &= x_{i+1}-x_i \cr
+A &= {{x_{i+1}-x_P}\over h} \cr
+B &= {{x_P-x_i}\over h} = 1-A \cr
+}
+$$
+
+\noindent we can write
+
+$$
+f(x_P) \approx A f(x_i) + B f(x_{i+1}) + \left[(A^3 - A)f''(x_i) + (B^3  -B)f''(x_{i+1})\right]{{h^2} \over 6}
+$$
+
+\noindent
+A cubic spline function (method or subroutine)
+calculates the $f''$ coefficients given the points $y_i = f(x_i)$
+by setting up and solving a tridiagonal set of equations.
+While somewhat more cumbersome than the explicit expression for the cubic
+polynomial in $x$, this formulation requires one to store only the values 
+of the second derivatives at each node, $f''(x_i)$. These are the values
+output by the spline function.
+There is no need to calculate the
+coefficients of the underlying cubic polynomial explicitly.
+This is in no way a disadvantage. Indeed, the process of
+calculating the coefficients of the interpolating polynomial is less
+numerically stable than using the spline formula directly [NRC].
+Also, this formulation requires but a single vector of $f''(x_i)$ values
+(in addition to the given $f(x_i)$ values) instead of four coefficients per
+interval. We will use this to our advantage when we extend move from splines of one independent variable to splines of several independent variables.
+
+If we have cubic splines for several functions tabulated at the same values
+of the independent variable $x_i$, it is convenient to write
+$$
+\eqalign{
+C &= (A^3-A){{h^2}\over 6} \cr
+D &= (B^3-B){{h^2}\over 6} \cr
+}
+$$
+\noindent with $A$ and $B$ as above. Then we can write
+$$
+f(x_P) \approx A f(x_i) + B f(x_{i+1}) + C f''(x_i) + D f''(x_{i+1})
+$$
+
+\noindent
+For a particular value of $x_p$, the same values of $A$, $B$, $C$ and $D$
+are shared by all of the splines, so once the bounding interval is
+determined, these values can be calculated once and stored.
+This notation has the further benefit of abstracting the underlying
+complexity of the cubic spline. We will use this to our advantage as we
+move to higher dimensions.
+
+It is important to understand that the $f''(x_i)$ coefficients are
+calculated once for a given set of $y_i=f(x_i)$. The cubic variation
+comes about from the $A$, $B$, $C$ and $D$ coefficients. 
+We shall find it convenient to think of the
+set of independent variables $x_i$ as the vector $\bf x$. Similarly,
+the set of functions $f(x_i)$ form the vector ${\bf f}$,
+and the set of second derivative
+spline coefficients $f''(x_i)$ form the vector ${\bf s}_x$.
+The calculation of the cubic spline coefficients
+can then be considered a vector operator transforming the vectors $\bf x$
+and $\bf f$ into the vector of second derivatives, ${\bf s}_x$.
+This allows us to proceed to the two-dimensional case without carrying around
+the baggage of the four terms of the underlying cubic polynomial.
+\medskip\goodbreak \noindent {\bf Two-Dimensional Interpolation}
+
+Let us consider a smooth function $f(x, y)$ tabulated on a rectangular grid
+at the points $(x_i, y_j)$. The samples of $x_i$ or $y_j$ need not be
+equally-spaced. The result is
+a two-dimensional table of values that
+can be stored in a matrix $\bf F$. The $i$-th row 
+contains values for $x=x_i$ for all of the values of $y_j$, in turn.
+Likewise, the
+$j$-th column of $\bf F$ contains values for $y=y_j$ for all of the values
+of $x_i$.
+
+We can readily calculate cubic splines for slices of $f(x, y)$ parallel to
+the coordinate axes through the nodes $(x_i, y_j)$ by taking rows or columns
+of $\bf F$, one at a time.
+We can calculate a cubic spline versus $y$ for each row of $\bf F$
+in turn. For a given row we need only store the second derivative coefficient
+for each node
+of the spline. Since our cubic spline formula only requires the second
+derivative at each node, we only need to store one additional value
+for each node,
+and these can be placed in a matrix ${\bf S}_y$ that is the same shape as
+$\bf F$.
+Likewise, we can calculate a cubic spline versus $x$ for each column of $\bf F$
+in turn. We need only store the second derivative coefficient for each node
+of the spline. These can be placed in another matrix ${\bf S}_x$ that is
+also the same
+shape as $\bf F$ and ${\bf S}_x$. Here, the $x$ or $y$ subscript refers to
+the independent variable of the spline.
+
+\includegraphics[scale = 0.75]{fig2dbox.png}
+
+Consider the rectangular patch of our spline with diagonal
+corners at the points $(x_i, y_j)$ and $(x_{i+1}, y_{j+1})$
+that surrounds our point of interest $(x_P, y_P)$
+such that $x_i < x_P < x_{i+1}$ and $y_j < y_P < y_{j+1}$.
+It is a simple matter to find the value at any point along the edges
+of this patch by evaluating the splines we have tabulated in
+the 
+${\bf S}_x$ and ${\bf S}_y$
+matrices. In particular, we can calculate the value of the spline at
+the point $f(x_i, y_p)$, here labeled $U$. We can do this by interpolating in
+the $y$ direction, evaluating the spline stored in the
+$i$-th row of ${\bf S}_y$.
+This is just a linear combination of four numbers:
+$$
+f(x_i, y_p) \approx A_y F_{i,j} + B_y F_{i,j+1} + C_y s_{y,i,j} + D_y s_{y,i,j+1}
+$$
+\noindent
+Likewise, we can evaluate the spline at $f(x_{i+1}, y_p)$, the point labeled $V$,
+by evaluating the spline in row $i+1$ of ${\bf S}_y$
+$$
+f(x_{i+1}, y_p) \approx A_y F_{i+1,j} + B_y F_{i+1,j+1} + C_y s_{y,i+1,j} + D_y s_{y,i+1,j+1}
+$$
+\noindent using the {\it same} values of $A_y$, $B_y$, $C_y$ and $D_y$.
+Now we have the value of the function at points $U$ and $V$.
+To interpolate our function at a point in the interior of the patch,
+we can next attempt to interpolate in the $x$ direction. However, we do not
+yet have enough information to do so. What information do we lack to find
+the value at $f(x_p, y_p)$ along this line segment? We would like for this, also
+to be an evaluation of a 1-D cubic spline. We have the value at the two
+endpoints. The only missing information we need to evaluate
+a cubic spline is the value of the second derivative with respect to $x$ at
+the two endpoints. However, the second derivative in our table of spline
+coefficients is the second derivative in $y$ direction, not the $x$ direction.
+We require the second derivatives
+with respect to $x$ at the two endpoints of our line segment.
+How should the
+second derivative with respect to $x$ vary in the $y$ direction along
+slice at $x$? We shall find it convenient to let this vary as a cubic function
+of $y$, as well, and let this also be defined by a cubic spline.
+To calculate this,
+what we need is a cubic spline in the $y$ direction
+of the second derivative coefficient of the cubic spline in the $x$ direction.
+We need a spline of a spline. We will find it convenient to introduce the
+concept, of a {\it cascaded} spline, a spline of spline coefficients.
+
+We can readily calculate this cascaded spline from ${\bf S}_x$.
+Recall that ${\bf S}_x$ is the matrix of cubic spline coefficients obtained
+by fitting a cubic spline to columns of $\bf F$.
+From ${\bf S}_x$ we can calculate a cascaded cubic spline
+for each {\it row} of ${\bf S}_x$
+and store the results in a new matrix ${\bf S}_{xy}$ that has the same shape as
+$\bf F$, ${\bf S}_x$ and ${\bf S}_x$.
+This cascaded cubic spline can be evaluated at points $U$ and $V$ to give the
+needed second derivative coefficients for the spline in the $x$ direction.
+
+$$
+\eqalign {
+s_x(x_i, y_p) &=
+A_y s_{x,i,j} + B_y s_{x,i,j+1} + C_y s_{xy,i,j} + D_y s_{xy,i,j+1}
+\cr
+s_x(x_{i+1}, y) &=
+A_y s_{x,i+1,j} + B_y s_{x,i+1,j+1} + C_y s_{xy,i+1,j} + D_y s_{xy,i+1,j+1} \cr
+}
+$$
+
+\noindent
+For a given value of $y_p$, this interpolation shares the share the same
+values of $A_y$, $B_y$, $C_y$ and $D_y$ as the two previous ones.
+
+Finally, we have all of the needed ingredients to interpolate in the $x$ direction.
+
+$$
+f(x_p, y_p) \approx A_x f(x_i, y_p) + B_x f(x_{i+1}, y_p) + C_x s_x(x_i,y_p) + D_x s_x(x_{i+1},y_p)
+$$
+
+To simplify the notation somewhat, let us refer to an element of
+$\bf F$ at $(x_i,y_j)$
+as $f_{00}$. The point $(x_{i+1},y_j)$ is $f_{10}$. The first subscript
+refers to $x$ and the second refers to $y$. Likewise, the element
+of ${\bf S}_x$ at $x_i,y_j$ is $s_{x00}$. Similarly,
+the element of ${bf S}_{xy}$ at the same
+point is $s_{xy00}$. The last $x$ or $y$ subscript is the independent variable
+of the last spline.
+
+For the 2-D case, the final step is the interpolation in the $x$ direction
+We can write
+$$
+f \approx A_x f_0 + B_x f_1 + C_x s_{x0} + D_x s_{x1} \eqno\hbox{Eq.\ 1-D}
+$$
+\noindent
+Of these, only $A_x$, $B_x$, $C_x$ and $D_x$ are known.  We can, however,
+express the unknowns in terms of further cubic spline evaluations.
+
+$$
+\eqalign {
+f_0 =& A_y f_{00} + B_y f_{01} + C_y s_{y00} + D_y s_{y01}
+\cr
+f_1 =& A_y f_{10} + B_y f_{11} + C_y s_{y10} + D_y s_{y11}
+\cr
+s_{x0} =& A_y s_{x00} + B_y s_{x01} + C_y s_{xy00} + D_y s_{xy01}
+\cr
+s_{x1} =& A_y s_{x10} + B_y s_{x11} + C_y s_{xy10} + D_y s_{xy11}
+\cr
+}
+$$
+\noindent The coefficients needed (besides $\bf F$) can be stored in three
+matrices, ${\bf S}_x$, ${\bf S}_x$ and ${\bf S}_{xy}$ that are the same
+size as $\bf F$. All of these can be calculated ahead of time with
+calls to the 1-D spline function.
+All four of these interpolations in $y$ share common values of
+$A_y$, $B_y$, $C_y$ and $D_y$.
+\noindent
+We can write these in a more compact form as
+$$
+\eqalignno {
+f_n^\done &= A_y f_{2n}^\dtwo + B_y f_{2n+1}^\dtwo + C_y s_{y,2n}^\dtwo + D_y s_{y,2n+1}^\dtwo &\hbox{Eq.\ 2-D}\cr
+s_{x,n}^\done &= A_y s_{x,2n}^\dtwo + B_y s_{x,2n+1}^\dtwo + C_y s_{xy,2n}^\dtwo+ D_y s_{xy,2n+1}^\dtwo
+\cr
+}
+$$
+\noindent with $n=0,1$.
+This compact form has does not simplify matters much for the 2-D case, but
+it will help us when we move to higher dimensions.
+The quantities superscripted $^\done$ or $^\dtwo$ refer to
+elements of $(x)$ or $(x, y)$ arrays, respectively. Finally, these are
+substituted into Eq.\ 1-D, above. This completes the 2-D case.
+
+Let us review the notation for our cascaded cubic spline.
+The coefficient $s_{xy01}$, for instance, is the second derivative with
+with respect to $y$
+of the second derivative with respect to $x$ of the function at the
+point $(x_i, y_{j+1})$.
+
+For each 1-D cubic spline (cascaded or not) we need store only one coefficient
+per grid point. Unlike the approach in {\it Numerical Recipes}, we can
+calculate all of the splines ahead of time. Our new formulation is
+numerically equivalent to theirs. Unlike the approach of Keys, with our
+new method we need not worry about the 16 coefficients of the bicubic
+polynomial or explicitly match derivatives.
+\medskip\goodbreak \noindent{\bf Three-Dimensional Interpolation}
+
+We have a smooth function of three variables $f(x, y, z)$
+sampled on a
+three-dimensional rectilinear grid.
+To interpolate a smooth function of three variables
+the same formula as the two-dimensional case, but we need to go back a step.
+Whereas, in the 2-D case, the two-bit indices refer to the quantities
+from tables the shape of the $F$ matrix, in the 3-D case they refer to
+intermediate results of evaluating cubic splines versus the $z$ coordinate.
+
+Consider a 3-D box bounding our point of interest. The box has as
+its diagonal the line segment from $(x_i, y_j, z_k)$ to
+$(x_{i+1},y_{j+1},z_{k+1})$. We shall find it convenient to number the
+corners of this bounding box with a three-bit number.
+
+\includegraphics[scale = 0.5]{fig3dbox.png}
+
+\noindent The three bits of this numbering scheme refer to the $x$, $y$, $z$
+coordinates with $x$ being the most significant bit.
+We shall first interpolate with respect to the $z$ coordinate along all
+of the vertical edges of the bounding box (the edges parallel to the $z$ axis).
+The shaded plane is the result of these interpolations. When viewed from above,
+this plane overlays the rectangle of the 2-D case. We can number the corners
+of this rectangle with the same 2-bit indices as with the 2-D case just by
+dropping the
+least-significant $z$ bit of the three-bit index.
+In the 3-D case, all of the two-bit quantities in the 2-D formula now
+represent
+the result of a 1-D cubic spline interpolation between two points in
+3-space. These are unknown, and must be evaluated before we can substitute
+them into the 2-D formula above. For every two-bit index in the 2-D case
+we need a 1-D spline formula to generate it from our 3-D tables of functions and
+splines and cascaded splines. Thus the left-hand sides of the following formulas
+are just the right-hand terms of the 2-D formula.
+
+$$
+\eqalign {
+f_{00} &= A_z f_{000} + B_z f_{001} + C_z s_{z000} + D_z s_{z001} \cr
+f_{01} &= A_z f_{010} + B_z f_{011} + C_z s_{z010} + D_z s_{z011} \cr
+f_{10} &= A_z f_{100} + B_z f_{101} + C_z s_{z100} + D_z s_{z101} \cr
+f_{11} &= A_z f_{110} + B_z f_{111} + C_z s_{z110} + D_z s_{z111} \cr
+}
+$$
+
+$$
+\eqalign{
+s_{x00} &= A_z s_{x000} + B_z s_{x001} + C_z s_{xz000} + D_z s_{xz001} \cr
+s_{x01} &= A_z s_{x010} + B_z s_{x011} + C_z s_{xz010} + D_z s_{xz011} \cr
+s_{x10} &= A_z s_{x100} + B_z s_{x101} + C_z s_{xz100} + D_z s_{xz001} \cr
+s_{x11} &= A_z s_{x110} + B_z s_{x111} + C_z s_{xz110} + D_z s_{xz111} \cr
+}
+$$
+
+$$
+\eqalign{
+s_{xy00} &= A_z s_{xy000} + B_z s_{xy001} + C_z s_{xyz000} + D_z s_{xyz001} \cr
+s_{xy01} &= A_z s_{xy010} + B_z s_{xy011} + C_z s_{xyz010} + D_z s_{xyz011} \cr
+s_{xy10} &= A_z s_{xy100} + B_z s_{xy101} + C_z s_{xyz100} + D_z s_{xyz001} \cr
+s_{xy11} &= A_z s_{xy110} + B_z s_{xy111} + C_z s_{xyz110} + D_z s_{xyz111} \cr
+}
+$$
+\noindent
+Again, the quantities with three-bit subscripts are values from
+our lookup tables of spline coefficients. The quantities with two subscripts
+are temporary arrays that that we substitute into the 2-D formulas.
+For the 3-D case, we perform this $z$ interpolation first, then
+the $y$ interpolation formulas from the 2-D case, and finally the 
+$x$ interpolation from the 1-D formula.
+
+With suitable array definitions, we can perform this in a loop of four
+iterations.
+$$
+\eqalignno{
+f_{n}^\dtwo &= A_z f_{2n}^\dthree + B_z f_{2n+1}^\dthree + C_z s_{z,2n}^\dthree + D_z s_{z,2n+1}^\dthree &\hbox{Eq.\ 3-D}\cr
+s_{x,n}^\dtwo &= A_z s_{x,2n}^\dthree + B_z s_{x,2n+1}^\dthree + C_z s_{xz,2n}^\dthree + D_z s_{xz,2n+1}^\dthree \cr
+s_{xy,n}^\dtwo &= A_z s_{xy,2n}^\dthree + B_z s_{xy,2n+1}^\dthree + C_z s_{xyz,2n}^\dthree + D_z s_{xyz,2n+1}^\dthree \cr
+}
+$$
+\noindent with $n=0,3$.
+The quantities superscripted $^\dtwo$ or $^\dthree$ refer to
+elements of $(x, y)$ or $(x, y, z)$ arrays, respectively.
+With this notation, the loop from 0 to 3 cycles through every corner of the
+rectangle in the same order as above. When the indices are written in binary,
+they match exactly the set above. We then substitute these into the set of Eq.\ 2-D above
+and then subsitute that result into Eq.\ 1-D.
+
+Unlike the method of Lekien and Marsden, our tricubic formulation bypasses
+the complexity of the 64 coefficients of the tricubic polynomial
+and lets the
+the underlying 1-D cubic splines take care of matching the derivatives.
+The new method requires only seven coefficeints per grid point instead of the
+64 coefficients of the tricubic polynomial.
+\medskip\goodbreak\noindent{\bf Four-Dimensional Interpolation}
+
+For the 4-D case, let us use the symbol $t$ for the fourth independent
+variable. Our point of interest lies inside the 4-D hyper-rectangle with the
+diagonal from
+$(x_i, y_j, z_k, t_l)$ to $(x_{i+1}, y_{j+1}, z_{k+1}, t_{l+1})$.
+The 4-D case is more difficult to visualize, but we can use the same
+methodology.
+We will find it convenient to label the corners of this hyper-rectangle with a four-bit
+field indexing $x$, $y$, $z$ and $t$, respectively. These uniquely
+number the sixteen vertices of the hyper-rectangle. We need to slice the hyper-rectangle
+perpendicular to the $t$ axis. The result of this slice is a 3-D rectangular
+box with eight vertices.  In all of our bit-field indexing schemes, the index of the $x$ coordinate is the most
+significant bit. When we interpolate versus $t$, we remove the least
+significant bit from the index.
+Counting in binary, we
+can write the eight equations for the value of our function at the
+corners of our 3-D box. The value of
+$f_{000}$ to $f_{111}$ as
+
+$$
+\eqalign
+{
+f_{000} &= A_t f_{0000} + B_t f_{0001} + C_t s_{t0000} + D_t s_{t0001} \cr
+f_{001} &= A_t f_{0010} + B_t f_{0011} + C_t s_{t0010} + D_t s_{t0011} \cr
+f_{010} &= A_t f_{0100} + B_t f_{0101} + C_t s_{t0100} + D_t s_{t0101} \cr
+f_{011} &= A_t f_{0110} + B_t f_{0111} + C_t s_{t0110} + D_t s_{t0111} \cr
+f_{100} &= A_t f_{1000} + B_t f_{1001} + C_t s_{t1000} + D_t s_{t1001} \cr
+f_{101} &= A_t f_{1010} + B_t f_{1011} + C_t s_{t1010} + D_t s_{t1011} \cr
+f_{110} &= A_t f_{1100} + B_t f_{1101} + C_t s_{t1100} + D_t s_{t1101} \cr
+f_{111} &= A_t f_{1110} + B_t f_{1111} + C_t s_{t1110} + D_t s_{t1111} \cr
+}
+$$
+
+\noindent
+We can write this more concisely as
+
+$$
+f_{n}^\dthree = A_t f_{2n}^\dfour + B_t f_{2n+1}^\dfour + C_t s_{t,2n}^\dfour + D_t s_{t,2n+1}^\dfour 
+$$
+\noindent
+with $n=0,7$. The quantities superscripted $^\dthree$ or $^\dfour$ refer to
+elements of $(x, y, z)$ or $(x, y, z, t)$ arrays, respectively. With this
+notation, the loop index $n$ can be taken as a 3-bit number whose bits
+represent the $x, y, z$ coordinates of the corners of our box in 3-D.
+
+Every quantity in the 3-D formula with a 3-bit subscript (or $^\dthree$ superscript) must be interpolated versus $t$. For instance,
+
+$$
+s_{z000} = A_t s_{z0000} + B_t s_{z0001} + C_t s_{zt0000} + D_t s_{zt0001}
+$$
+
+\noindent
+is one element in the array of coefficients of the
+form
+
+$$
+s_{z,n}^\dthree = A_t s_{z,2n}^\dfour + B_t s_{z,2n+1}^\dfour + C_t s_{zt,2n}^\dfour + D_t s_{zt,2n+1}^\dfour
+$$
+
+\noindent This must be repeated for every 3-bit subscripted quantity
+(or corresponding $^\dthree$ superscripted quantity in the concise version)
+of the 3-D formula. This
+process is a bit tedious, but very straightforward.
+Every $f$ value in 3-D is the result of an interpolation in $t$ in 4-D.
+Here is the full set.
+$$
+\eqalignno{
+f_{n}^\dthree &= A_t f_{2n}^\dfour + B_t f_{2n+1}^\dfour + C_t s_{t,2n}^\dfour + D_t s_{t,2n+1}^\dfour & \hbox{Eq.\ 4-D}\cr
+s_{z,n}^\dthree &= A_t s_{z,2n}^\dfour + B_t s_{z,2n+1}^\dfour + C_t s_{zt,2n}^\dfour + D_t s_{zt,2n+1}^\dfour \cr
+s_{x,n}^\dthree &= A_t s_{x,2n}^\dfour + B_t s_{x,2n+1}^\dfour + C_t s_{xt,2n}^\dfour + D_t s_{xt,2n+1}^\dfour \cr
+s_{xz,n}^\dthree &= A_t s_{xz,2n}^\dfour + B_t s_{xz,2n+1}^\dfour + C_t s_{xzt,2n}^\dfour + D_t s_{xzt,2n+1}^\dfour \cr
+s_{xy,n}^\dthree &= A_t s_{xy,2n}^\dfour + B_t s_{xy,2n+1}^\dfour + C_t s_{xyt,2n}^\dfour + D_t s_{xyt,2n+1}^\dfour \cr
+s_{xyz,n}^\dthree &= A_t s_{xyz,2n}^\dfour + B_t s_{xyz,2n+1}^\dfour + C_t s_{xyzt,2n}^\dfour + D_t s_{xyzt,2n+1}^\dfour \cr
+}
+$$
+\noindent with $n=0,7$. We need to calculate and store the 15 1-D cubic
+splines in the right-hand terms of these formulas.
+
+Note the last quantity $s_{xyzt,2n+1}^\dfour$. This
+is an element of a matrix that is a spline of a spline of a spline of a spline.
+We must temporarily store the left-hand side values in arrays so that we can
+substitute these into the set of Eq.\ 3-D. We then store these temporarily and
+substitute these into the set Eq.\ 2-D, and finally put those results in
+Eq.\ 1-D. The recursive nature of this method is evident, and we can proceed to
+higher dimensions with comparative ease.
+
+\goodbreak\medskip\noindent{\bf Five-Dimensional Interpolation}
+
+For the 5-D case, our function is $f(x, y, z, t, u)$. Our point of interest
+lies inside the 5-D hyper-rectangle with the diagonal from
+$(x_i, y_j, z_k, t_l, u_m)$ to $(x_{i+1}, y_{j+1}, z_{k+1}, t_{l+1}, u_{m+1})$.
+We will find it convenient to label the corners of this hyper-rectangle with a
+five-bit
+field indexing $x$, $y$, $z$, $t$ and $u$, respectively. These uniquely
+number the 32 vertices of the 5-D hyper-rectangle. We need to slice the 5-D
+hyper-rectangle perpendicular to the $u$ axis at the point of interest. To do this
+we perform a 1-D spline interpolation along each edge. This gives us, in
+effect, a 4-D hyper-rectangle, and we can substitute the results into the set of Eq.\ 4-D
+above.
+Each $f$ coefficient is the result of a 1-D interpolation using two
+pairs of $f$ and $s_u$ coefficients.
+Each $s$ spline coefficient is the result of a 1-D interpolation using
+corresponding $s$ and $s_u$ coefficients.
+Each coefficient on the right-hand side of the 4-D equations must appear on the
+left-hand side of the 5-D equations. We can immediately write down
+$$
+\eqalignno{
+  f_{n}^\dfour &= A_u f_{2n}^\dfive + B_u f_{2n+1}^\dfive + C_u s_{u,2n}^\dfive + D_u s_{u,2n+1}^\dfive
+  & \hbox{Eq.\ 5-D}\cr
+  s_{t,n}^\dfour &= A_u s_{t,2n}^\dfive + B_u s_{t,2n+1}^\dfive + C_u s_{tu,2n}^\dfive + D_u s_{tu,2n+1}^\dfive \cr
+  s_{z,n}^\dfour &= A_u s_{z,2n}^\dfive + B_u s_{z,2n+1}^\dfive + C_u s_{zu,2n}^\dfive + D_u s_{zu,2n+1}^\dfive \cr
+  s_{zt,n}^\dfour &= A_u s_{zt,2n}^\dfive + B_u s_{zt,2n+1}^\dfive + C_u s_{ztu,2n}^\dfive + D_u s_{ztu,2n+1}^\dfive \cr
+  s_{x,n}^\dfour &= A_u s_{x,2n}^\dfive + B_u s_{x,2n+1}^\dfive + C_u s_{xu,2n}^\dfive + D_u s_{xu,2n+1}^\dfive \cr
+  s_{xt,n}^\dfour &= A_u s_{xt,2n}^\dfive + B_u s_{xt,2n+1}^\dfive + C_u s_{xtu,2n}^\dfive + D_u s_{xtu,2n+1}^\dfive \cr
+  s_{xz,n}^\dfour &= A_u s_{xz,2n}^\dfive + B_u s_{xz,2n+1}^\dfive + C_u s_{xzu,2n}^\dfive + D_u s_{xzu,2n+1}^\dfive \cr
+  s_{xzt,n}^\dfour &= A_u s_{xzt,2n}^\dfive + B_u s_{xzt,2n+1}^\dfive + C_u s_{xztu,2n}^\dfive + D_u s_{xztu,2n+1}^\dfive \cr
+  s_{xy,n}^\dfour &= A_u s_{xy,2n}^\dfive + B_u s_{xy,2n+1}^\dfive + C_u s_{xyu,2n}^\dfive + D_u s_{xyu,2n+1}^\dfive \cr
+  s_{xyt,n}^\dfour &= A_u s_{xyt,2n}^\dfive + B_u s_{xyt,2n+1}^\dfive + C_u s_{xytu,2n}^\dfive + D_u s_{xytu,2n+1}^\dfive \cr
+  s_{xyz,n}^\dfour &= A_u s_{xyz,2n}^\dfive + B_u s_{xyz,2n+1}^\dfive + C_u s_{xyzu,2n}^\dfive + D_u s_{xyzu,2n+1}^\dfive \cr
+  s_{xyzt,n}^\dfour &= A_u s_{xyzt,2n}^\dfive + B_u s_{xyzt,2n+1}^\dfive + C_u s_{xyztu,2n}^\dfive + D_u s_{xyztu,2n+1}^\dfive \cr
+}
+$$
+\noindent with $n=0,15$. Here, the left-hand quantities are temporary results
+that are substituted into the set Eq.\ 4-D. The
+right-hand $f$ and $s$ quantities
+are the tabulated spline coefficients. We need to precalcuate 29 coefficients
+for each grid point.
+\goodbreak\medskip\noindent{\bf Higher Dimensions}
+
+We can readily extend this process to higher dimensions. For the 6-D case
+we will have a set of equations with $n=0,31$. The new independent variable
+we can call $v$. Each unknown term on
+the right-hand side of the set of Eq.\ 5-D must appear on the left-hand
+side of the equal sign with a 1-D spline formula on the right.
+All of the $^\dfive$ superscripts get bumped to $^\dsix$. The
+symbol $f$ becomes $s_v$. We append a $v$ on each of the cascaded splines.
+
+The number of 1-D splines (including cascades of splines) needed for a
+function of $n$ variables is given by
+$$
+{\textstyle{ 1 \over 3}}n^3 - n^2 + {\textstyle{8 \over 3}}n - 1
+$$
+\noindent so, the we need 1, 3, 7, 15, 29, 51, 83$\dots$ splines for
+functions of 1, 2, 3, 4, 5, 7$\dots$ variables.
+It should be possible to write meta software to generate the formulae and
+software source code for higher dimensions.
+\goodbreak\medskip\noindent{\bf Implementation} 
+
+The target system for the author's application uses the C programming
+language. Let us first consider the array of function values.
+Multi-dimensional arrays are cumbersome. In C, there
+is no easy way to dynamically allocate a multi-dimensioned array. It is
+simple to define a static multi-dimensioned array with sizes hard-coded, but
+dynamically allocating is tedious because of the arrays of pointers that
+must also be allocated. It proved expedient to use
+one-dimensional arrays for the table of functions and spline coefficients.
+This made it simple to allocate dynamically the storage for the spline
+coefficients with sizes determined at runtime. It also has the benefit of
+making all of the different dimensional functions have the same prototype. 
+For example, for a 4-D array, instead of {\tt f[i][j][k][l]} we use a
+1-D array, {\tt f[((i*ny+j)*nz+k)*nt+l]}. While this might seem cumbersome,
+we often have many spline coefficients to look up, to the 1-D index
+can be calculated once and shared. With hard-coded, multi-dimensional arrays
+in C, the compiler does this calculation anyway.
+
+Multicubic splines functions were written to interpolate functions of
+two to five variables.
+For each case, there are three C functions, and all the sets share
+similar prototypes.  Here, the character {\tt N} is
+replaced by the number of independent variables, 2--5.
+The function prototypes are
+\verbatim|
+
+double **cspNd_open(double *xv[], int nv[], double f[]);
+double cspNd_eval(double p[], double *xv[], int nv[], double f[],
+    double **splines, int interval[]);
+void cspNd_close(double **splines);
+|endverbatim
+
+\def\_{\ifmmode ^^A\else\char`\_\discretionary{}{}{}\fi}
+The array {\tt xv[N]} is a ragged, two-dimensional array (array of arrays)
+that specifies the sample points of the rectilinear grid. Each
+independent variable must be in strictly-increasing order (else
+{\tt cspNd\_open()} will return a {\tt NULL} pointer).
+The array {\tt nv[N]} gives the number of points along each
+axis of the rectilinear grid. The array {\tt f} of
+length {\tt nv[0]$\times$nv[1]$\times$...$\times$nv[N-1]} contains
+the function values, packed tightly with the {\tt xv[N-1]} coordinate
+varying most rapidly. One can fill this array sequentially with {\tt N}
+nested loops with the
+{\tt xv[0]} loop as the outermost loop going from zero to {\tt nv[0]-1}.
+
+The function {\tt cspNd\_open()} allocates the storage for {\tt splines}
+arrays that contain the cubic
+spline coefficients, calls the 1-D spline function repeatedly and fills
+up the {\tt splines} coefficient arrays. It is called once.
+It returns a two-dimensional array
+of spline coefficients. On failure, it
+returns a {\tt NULL} pointer. The return value can be treated as an object
+that is then
+passed to the {\tt cspNd\_eval()} function to evaluate the spline.
+If there are several functions
+being approximated, each must have its own {\tt splines} object.
+For each spline evaluation, the
+user fills in the {\tt p[N]} vector with the coordinates of the desired point
+and calls {\tt cspNd\_eval()} with the same arguments as the call to
+{\tt cspNd\_open()}.  The {\tt interval[N]} array maintains the array of
+indices to the bounding
+hyper-rectangle that contains the previous point.
+This is done to minimize the grid search time if the function is called with
+slowly-varying independent variables.
+If there are a number of different functions of the same grid (the same values of {\tt xv[]} and {\tt nv[]}, they can all share the same
+{\tt interval[]} array so that the search only need be performed once.
+Likewise, they can share the same {\tt xv}, {\tt nv} and {\tt p} arrays.
+
+When the user is finished interpolating, the user calls
+{\tt cspNd\_close(splines)} to free the memory.
+\goodbreak\medskip\noindent{\bf Testing}
+
+Testing the higher-dimensional cases is problematic because we live in
+a three-dimensional world, and it is difficult to visualize higher dimensional
+spaces. Using a radial function as a test-case makes things easier to
+visualize.
+A radial function depends only on the Euclidian distance to a point.
+Here we will use the origin, so $r = \sqrt{x^2 + y^2 + \dots}$.
+We chose the sinc function, $\sin(r)/r$, because of its ease of computation
+and smoothness. The $1/r$ dependence is not easy to fit with a cubic.
+
+The algorithms for two to five dimensions were coded in the C programming
+language and tested using a low-end netbook Windows computer with an Intel
+Celeron processor running at 1.4 GHz. The compiler was MinGW 32-bit Gcc 4.7.2.
+Double precision arithmetic was used throughout.
+
+To compare with higher dimensions, let us first consider the one-dimensional
+cubic spline of our sinc function.
+The samples were spaced at $\pi/2$, producing four samples per
+cycle. One additional sample was chosen near the origin to define
+the slope at the origin, which we know to be zero.
+There were a total of twelve nodes.
+
+\includegraphics[scale=0.333333]{onetest.pdf}
+
+\noindent The dashed, black curve is the result of fitting a cubic spline to the
+exact sample points (the red square markers). The solid red curve shows the
+exact $\rm sinc$ function. The
+1-D cubic spline does a good job of approximating this 
+function considering that we used only twelve samples (four samples per cycle).
+
+For the 2-D case, let us use $\sin(r)/r$ with $r=\sqrt{x^2+y^2}$. This
+function resembles the splash of a pebble on a smooth pond. This is
+sampled on a 2-D grid with the same sampling rate on each axis that we used
+for the 1-D reference case. To check the goodness of fit, we can plot
+different slices through
+the origin at different azimuths. At each azimuth, we evaluate the 2-D spline
+at a fine increment of $r$, and we plot the fit versus $r$. The
+following figure shows a composite of
+50 different random azimuths.
+
+\includegraphics[scale=0.333333]{bitest.pdf}
+
+\noindent The inset square shows the $x$-$y$ plane. The points
+at the intersections of the square grid (green) are the nodes of the
+2-D spline.
+The arcs (blue) show the zero contours of the $\sin(r)/r$ function.
+The lines radiating from the origin show the azimuth of the random slices.
+The value of the 2-D spline is plotted in black versus finely-sampled
+increments in radius along each of these slices.
+The exact value is overlaid in red. All of the random slices show good agreement
+with the exact function no matter their azimuth. You may be wondering why
+there are more cycles of the sinc function than in the 1-D example.
+The reason is that in our square sample space, the corner furthest from the
+origin is a factor of $\sqrt{2}$ greater in distance.
+
+Finally, we will skip to the 4-D quadcubic case. Let us use the same
+$\sin(r)/r$ function, this time with $r=\sqrt{x^2+y^2+z^2+t^2}$.
+We will use the same sampling along each axis is that we used for the cases
+above, so our grid has 12 samples along each of the 4 axes for a total
+$12^4$=20,736 nodes in the fit.
+Again, we will randomly choose points on the surface of the bounding hyper-rectangle
+(but not on slices through the origin).
+To get such a point, we generate four pseudo-random numbers to define a point
+in the
+hyper-rectangle. We then randomly set one of the four variables to its maximum
+value to move it to the boundary. Then we can evaluate the quadcubic spline
+finely on points along the line segment between our random point and the origin.
+With sufficiently-fine sampling, the result should be a smooth curve.
+The following figure shows the results of interpolating along a thousand random
+slices and plotting each slice versus radius. Each slice passes through the
+origin. The origin has $r=0$, so all of the slices begin at $r=0$ with the
+value of $f(0,0,0,0)=1$.
+
+\includegraphics[scale=0.333333]{quadtest.pdf}
+
+\noindent The red curve is the exact $\sin(r)/r$. The cloud of black curves
+are the thousand slices. Since the diagonal of a 4-D hypercube is twice
+the length of one side, we must extend the $r$ axis by a factor of two to
+display this diagonal. The tick marks are at the grid spacing of $\pi/4$.
+It is evident that the slices are smooth and are as accurate as the underlying
+1-D splines.
+The sinc function for the 4-D case has twice the number of cycles as the
+1-D case because the diagonal of a 4-D hypercube is twice the length of a side.
+
+The results were similarly accurate for the 3-D and 5-D cases.
+The test case used a grid with 12 samples of each independent variable.
+On the reference machine, interpolation was clocked at
+about 810 samples per second. For the 5-D case, the rate was about 550
+samples per second. This implies approximately O$(n^2)$ performance in
+for the $n$-D case.
+The algorithm itself has approximately O$n^4$ complexity.
+Cache faults may be the biggest limiting factor to performance for higher
+dimensions. Even for the 5-D case, the time to calculate the underlying
+1-D cubic splines was less than a second. Interestingly with Gcc, the code
+ran slower when compiled with {\tt -O2} optimization than
+with {\tt -O1} optimization.
+
+These tests used double precision arithmetic. For the simple test case above,
+single precision arithmetic was adequate for 4-D case but not for the 5-D case.
+\goodbreak\medskip\noindent{\bf Conclusions}
+
+We have presented a multicubic interpolation method that is recursive in
+structure and relies on nested evaluations of 1-D cubic splines.
+Formulas were presented to interpolate functions of two to five independent
+variables. All of the underlying 1-D cubic spline coefficients are tabulated
+ahead of time.
+
+Cascades of cubic spline coefficients are stored in arrays that are the same
+size and shape as the input array of function values.
+These spline coefficients are used to interpolate the function directly.
+To evaluate the spline, the cell bounding the point of interest is
+located with a 1-D search on each axis. This cell is a hyper-rectangle.
+Splines and cascaded splines are evaluated using 1-D spline interpolation
+versus one axis.
+The result is a hyper-rectangle of one smaller dimension. The process
+continues until a line segment, and finally a single point remains.
+The resulting interpolating function is smooth with continuous first and
+second derivatives in every direction.
+No tedious matching of coefficients is required to achieve continuity or
+smoothness. It is straightforward to extend the method to higher dimensions.
+\goodbreak\medskip\noindent{\bf References}
+
+\noindent{\bf[NRC]} {\it Numerical Recipes in C:
+The Art of Scientific Computing, 2nd ed. Edition,} Press, W.H., Teukolsky, S.A., Vetterling, W.T. and Flannery, B.P., 1992, sections 3.3 and 3.6.
+
+\noindent{\bf [KEYS]} R. Keys, (1981). ``Cubic convolution interpolation for digital image processing,'' {\it IEEE Transactions on Acoustics, Speech, and Signal Processing,} {\bf 29 (6)}: 1153–1160. doi:10.1109/TASSP.1981.1163711.
+
+\noindent{\bf [L\&M]} F. Lekien and J. Marsden,
+``Tricubic interpolation in three dimensions,''
+{\it International Journal for Numerical Methods in Engineering},
+2005; {\bf 63}:455-471.
+
+\noindent{\bf [B\&L]} Broomhead, D.S. and Lowe, D.,
+``Multivariable Functional Interpolation and Adaptive Networks,''
+{\it Complex Systems} {\bf 2} (1988) 321-355.
+
+\bye
+To convert this to computer software, we need to do the
+$y$ interpolation before the $x$ interpolation since many of the coefficients
+of the $x$ interpolation depend on results of the $y$ interpolation.
+This completes the 2-D bicubic spline.
+
+Let us express this in a notation that is closer to pseudocode. Perhaps
+The elegance of our new formulation of the bicubic spline is that all
+of the needed spline coefficients can be calculated ahead of time and
+can be stored in only three matrices of the same shape as $\bf F$.
+To evaluate our bicubic spline at the point $(x, y)$ we need to first
+find the rectangular patch bounding our point. We need
+the indices $i$ and $j$ such that $x_i < x < x_{i+1}$ and
+$y_j < y < y_{j+1}$.
+
+Next, we interpolate in the $y$ direction to find the
+value of the splines
+at $(x_i, y)$ and $(x_i+1, y)$ using values from $\bf F$ and ${\bf S}_y$
+and the value of the second derivatives at the same points from 
+${\bf S}_y$ and ${\bf S}_{xy}$. These two splines share common values of $A_y$, $B_y$ and
+$h_y$ and therefore $C_y$ and $D_y$ in our 1-D formula.
+
+Then we can interpolate in the $x$ direction. This, too, is accomplished
+with another application of the 1-D cubic spline formula.
+
+So, our bicubic spline evaluation is reduced to three evaluations of 1-D cubic
+splines, and two of them share common values of our spline coefficients.
+
+So the question remains is whether the process is symmetric in $x$ and $y$.
+We have been able to show experimentally that this is the case simply
+transposing $\bf F$ and interchanging $x$ and $y$.
+
+For the tricubic case, the procedure is very similar, but we will need
+to tabulate a total of seven cubic splines. In the bicubic case, we needed
+two splines and one spline of a spline. In the tricubic case, we will need
+a total seven splines, one of which is a spline of a spline of a spline.
+For the quadcubic case, we will need a total of fifteen splines,
+spline of a spline of a spline of a spline.
+
+To determine the splines needed, we can start with the line segment,
+proceed to the rectangle, and finally to the 3-D box.
+
+
+\bye
+
+Our problem it to create an interpolator for a function of three variables.  The function is expensive to calculate, so we want a way to approximate quickly the value of the function at any point. We can allow each variable to take on discrete values. Therefore, our function can be calculated at three-dimensional rectangular mesh of points.  This lengthy calculation can be done ahead of time, so the speed of the program that performs the model is not relevant here. This mesh defines a stack of rectangular boxes in space. The grid need not be equally-spaced, so the boxes may be of different sizes. We can consider each box independently. Given a point in space defined by its three coordinates, three successive one-dimensional searches are sufficient to determine which box contains that point. Let us now turn our attention to the box containing our point.
+
+Lekein and Marsden [L\&M] provide a formulation for a tricubic spline. Our notation differs somewhat from theirs. Their formulation requires a numerical calculation of partial derivatives. They state that knowledge of the cubic along all of the edges of the box is sufficient to define the tricubic everywhere inside the box. Let us assume that the diagonal of our box goes from $(0,0,0)$ to the point $(p,q,r)$.  This departs from the notation of L\&M, in which they use a unit cube. Their formulation is continuous $(C^0)$ and smooth $(C^1)$.
+
+Following the formulation of [L\&M], we seek to find a tricubic spline of a function of three variables that approximates our function everywhere inside a box. We seek the function $f(x,y,z)$ that fits the region inside a box. 
+$$
+\eqalignno{
+f(x,y,z) &= {\sum_{i=0}^{3}}{\sum_{j=0}^{3}}{\sum_{k=0}^{3}}{A_{ijk}x^iy^jz^k}&(1)\cr
+}
+$$
+\noindent Here, we choose $0^0\equiv 1$.
+Our problem is to determine the unknown coefficients $A_{ijk}$. There are $4^3=64$ of them.
+
+Let us begin by calculating a one-dimensional cubic spline along lines through our grid points parallel to each of the axes. There will be three times as many of these cubic splines as there are total number of points in the lookup table. This can be done ahead of time.  So let us assume that we have already calculated twelve cubic splines through the edges of our box. Unlike the approach of [L\&M], these splines have continuous second derivatives. Another advantage is that these one dimensional splines require no derivatives.
+
+Let us then calculate the cubic spline interpolator at orthogonal lines through each point of the grid. For any particular box, there are 12 edges and so are 12 cubic splines that pass through all of the edges of the box. We will end up with a total of three times as many cubic splines as there are points in the lookup table. Singling out one box and translating it to the origin, our box has one corner on the origin and its diagonally opposite corner at $(x=p,y=q,z=r)$. We can retrieve the 12 cubic splines for the edges of this box.
+$$
+\eqalignno{
+\matrix{
+s_1(x)&=&f(x,y=0,z=0)\cr
+s_2(x)&=&f(x,y=q,z=0)\cr
+s_3(x)&=&f(x,y=0,z=r)\cr
+s_4(x)&=&f(x,y=q,z=r)\cr\noalign{\smallskip}
+s_5(y)&=&f(x=0,y,z=0)\cr
+s_6(y)&=&f(x=p,y,z=0)\cr
+s_7(y)&=&f(x=0,y,z=r)\cr
+s_8(y)&=&f(x=p,y,z=r)\cr\noalign{\smallskip}
+s_9(z)&=&f(x=0,y=0,z)\cr
+s_{10}(z)&=&f(x=p,y=0,z)\cr
+s_{11}(z)&=&f(x=0,y=q,z)\cr
+s_{12}(z)&=&f(x=p,y=q,z)\cr
+}&&(2)\cr
+}
+$$
+\noindent
+Each of these will be a cubic in the independent variable of the form
+$$
+\eqalignno{
+s_i(t)&=C_{i,0} + C_{i,1} t + C_{i,2} t^2 + C_{i,3} t^3&(3) \cr
+}
+$$
+\noindent
+where the coefficients $C_{ij}$ are known.
+We seek to solve the set of simultaneous equations (2) for the unknown $A_{ij}$
+in terms of the known $C_{ij}$. At first glance, it would seem like there is insufficient information for a solution since there are 64 unknowns but only $4\times 12=48$ spline coefficients. However, from a purely geometric argument, we can show that our problem is actually over-determined. On any edge of the box, four points are sufficient to define the cubic equation for that edge. (The location of the added points is not important since the value of the function at any four points defines the cubic. The added points can even be beyond the edges of the box.) So if we were to evaluate our cubic spline at two additional points on each edge, we would have sufficient information to determine all of the cubic equations.  So with our original 8 corner points plus 2 additional points on each of the 12 edges edge gives us a total of 32 values of our our unknown function. Alternatively, the value of the first derivative at each grid point is sufficient. (It should be possible to develop a 32-point Lagrangian interpolator for gridded data, but we seek higher-order smoothness.)
+
+One way to reduce the number of coefficients is to eliminate higher-power cross terms. In equation (1), if we let 
+$$A_{ijk}\equiv 0 \hbox{\quad if\quad} i+j+k>4$$
+\noindent
+then we are left with precisely 32 coefficients.
+Allowing only the lower power terms in no way restricts the ability of the function $f(x,y,z)$ to follow the cubic splines along the edges of our box.
+$$
+\eqalign{
+f&(x,y,z) = 
+   (A_{0,1,3}\,y+A_{1,0,3}\,x+A_{0,0,3})\,z^3\cr\noalign{\medskip}
+  & +[A_{0,2,2}\,y^2+(A_{1,1,2}\,x+A_{0,1,2})\,y+A_{2,0,2}\,x^2+A_{1,0,2}\,x+A_{0,0,2}]\,z^2\cr\noalign{\medskip}
+  & +[A_{0,3,1}\,y^3+(A_{1,2,1}\,x+A_{0,2,1})\,y^2+(A_{2,1,1}\,x^2+A_{1,1,1}\,x+A_{0,1,1})\,y\cr
+  & +A_{3,0,1}\,x^3+A_{2,0,1}\,x^2+A_{1,0,1}\,x+A_{0,0,1}]\,z\cr
+  \noalign{\medskip}
+  & +(A_{1,3,0}\,x+A_{0,3,0})\,y^3+(A_{2,2,0}\,x^2+A_{1,2,0}\,x+A_{0,2,0})\,y^2+(A_{3,1,0}\,x^3+A_{2,1,0}\,x^2+A_{1,1,0}\,x+A_{0,1,0})\,y\cr
+  &+A_{3,0,0}\,x^3+A_{2,0,0}\,x^2+A_{1,0,0}\,x+A_{0,0,0}\cr
+}
+$$
+\bye
+n=0
+for i in range(4):
+  for j in range(4):
+    for k in range(4):
+      if i+j+k > 4:
+        continue
+      print i,j,k
+      n += 1
+print "n=",n
